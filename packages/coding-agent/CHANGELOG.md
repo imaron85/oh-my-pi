@@ -21,6 +21,10 @@
 - Fixed "Please use nerdfont" notification incorrectly persisting after theme configuration
 - Fixed sampling parameter errors for newer Anthropic models (Opus 4.7+, Sonnet 5+)
 
+### Fixed
+
+- Fixed `hub` messaging, mailboxes, relays, and parked-agent revival for concurrent SDK sessions using private agent registries.
+
 ## [18.0.11] - 2026-08-29
 
 ### Added
