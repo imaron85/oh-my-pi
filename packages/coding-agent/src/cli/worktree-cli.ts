@@ -12,6 +12,11 @@
  *     marker naming the live omp process; a
  *     sandbox whose owner is still running is reported `live` and never
  *     removed without `--all`, so `clear` reclaims only crashed leftovers.
+ *   - **Session worktrees** (`fleet/worktree.ts`): a regular git worktree on a
+ *     persistent `omp/session/<name>` branch, identified by a
+ *     `.omp-session-worktree.json` marker. These are user-managed and
+ *     persistent: default `clear` never touches them, and `--all` removes them
+ *     only through `git worktree remove`, refusing dirty checkouts.
  *
  * Legacy entries from before the encoding change keep working because git still
  * tracks them by branch name. This command exists to GC them on demand.
@@ -21,9 +26,10 @@ import * as path from "node:path";
 import * as vcs from "@oh-my-pi/pi-natives/vcs";
 import { getWorktreesDir, isEnoent } from "@oh-my-pi/pi-utils";
 import chalk from "@oh-my-pi/pi-utils/chalk";
+import { readSessionWorktreeMarker, SESSION_WORKTREE_MARKER, type SessionWorktreeInfo } from "../fleet/worktree";
 import { hasLiveIsolationOwner, ISOLATION_OWNER_FILE } from "../task/isolation-ownership";
 
-type WorktreeKind = "pr-checkout" | "task-isolation" | "empty" | "stray";
+type WorktreeKind = "pr-checkout" | "task-isolation" | "session" | "empty" | "stray";
 
 const TASK_ISOLATION_MOUNT_DIRS = ["m", "merged"] as const;
 
@@ -36,6 +42,8 @@ export interface WorktreeEntry {
 	parentRepo?: string;
 	/** Branch name extracted from the parent's tracking file, when available. */
 	branch?: string;
+	/** Sanitized session name from the marker, for `session` entries. */
+	name?: string;
 	/** When set, the entry is unhealthy and `omp worktree clear` will remove it. */
 	orphanReason?: string;
 }
@@ -77,7 +85,12 @@ export async function listWorktrees(options: ListWorktreesOptions): Promise<void
 
 export async function clearWorktrees(options: ClearWorktreesOptions): Promise<void> {
 	const entries = await scanWorktrees();
-	const targets = options.all ? entries : entries.filter(entry => entry.orphanReason !== undefined);
+	// Session worktrees are persistent by design: default clear (orphan cleanup)
+	// skips them entirely; only --all may remove them, and then only via proper
+	// git worktree removal below.
+	const targets = options.all
+		? entries
+		: entries.filter(entry => entry.kind !== "session" && entry.orphanReason !== undefined);
 
 	if (targets.length === 0) {
 		if (options.json) {
@@ -101,9 +114,28 @@ export async function clearWorktrees(options: ClearWorktreesOptions): Promise<vo
 	}
 
 	const results: { path: string; ok: boolean; error?: string }[] = [];
+	const skipped: { path: string; reason: string }[] = [];
 	const parentsToPrune = new Set<string>();
 	for (const target of targets) {
 		try {
+			if (target.kind === "session") {
+				const refusal = await sessionRemovalRefusal(target);
+				if (refusal) {
+					skipped.push({ path: target.path, reason: refusal });
+					continue;
+				}
+				// Verified clean (marker aside) above; --force is required because the
+				// untracked marker file would otherwise make git refuse the removal.
+				const removed = target.parentRepo
+					? await vcs.git(target.parentRepo)?.worktreeRemove(target.path, true)
+					: false;
+				if (removed) {
+					results.push({ path: target.path, ok: true });
+				} else {
+					results.push({ path: target.path, ok: false, error: "git refused to remove session worktree" });
+				}
+				continue;
+			}
 			if (target.kind === "pr-checkout" && target.parentRepo && !target.orphanReason) {
 				// Live worktree: ask git to remove it cleanly. If git refuses (locked,
 				// dirty, etc.), fall back to fs.rm and rely on `worktree prune` to
@@ -136,9 +168,14 @@ export async function clearWorktrees(options: ClearWorktreesOptions): Promise<vo
 	const failed = results.length - succeeded;
 
 	if (options.json) {
-		console.log(JSON.stringify({ removed: succeeded, failed, results }, null, 2));
+		console.log(JSON.stringify({ removed: succeeded, failed, skipped, results }, null, 2));
 		if (failed > 0) process.exitCode = 1;
 		return;
+	}
+
+	for (const skip of skipped) {
+		console.log(`${chalk.yellow("skipped")}  ${skip.path}`);
+		console.log(`          ${chalk.dim(skip.reason)}`);
 	}
 
 	for (const result of results) {
@@ -149,8 +186,40 @@ export async function clearWorktrees(options: ClearWorktreesOptions): Promise<vo
 			if (result.error) console.log(`          ${chalk.dim(result.error)}`);
 		}
 	}
-	console.log(chalk.dim(`\n${succeeded} removed${failed > 0 ? ` · ${chalk.red(`${failed} failed`)}` : ""}`));
+	const skippedNote = skipped.length > 0 ? ` · ${chalk.yellow(`${skipped.length} skipped`)}` : "";
+	console.log(
+		chalk.dim(`\n${succeeded} removed${skippedNote}${failed > 0 ? ` · ${chalk.red(`${failed} failed`)}` : ""}`),
+	);
 	if (failed > 0) process.exitCode = 1;
+}
+
+/**
+ * Why a session worktree must not be removed right now, or `undefined` when
+ * proper `git worktree remove` may proceed. Refusals are per-entry warnings,
+ * never thrown.
+ */
+async function sessionRemovalRefusal(entry: WorktreeEntry): Promise<string | undefined> {
+	if (!entry.parentRepo || !vcs.git(entry.parentRepo)) {
+		return "parent repo missing; remove manually with `git worktree remove`";
+	}
+	const checkout = vcs.git(entry.path);
+	if (!checkout) {
+		return "cannot open worktree to verify it is clean";
+	}
+	try {
+		// The untracked session marker is our own metadata, not user work — it
+		// must not block removal, so a plain isDirty() is too strict here.
+		const status = await checkout.statusPorcelain({});
+		const dirty = status
+			.split("\n")
+			.filter(line => line.length > 0 && line.slice(3).replace(/^"(.*)"$/, "$1") !== SESSION_WORKTREE_MARKER);
+		if (dirty.length > 0) {
+			return "worktree has uncommitted or untracked changes";
+		}
+	} catch (err) {
+		return `cannot verify clean status: ${err instanceof Error ? err.message : String(err)}`;
+	}
+	return undefined;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -209,6 +278,12 @@ async function scanWorktrees(): Promise<WorktreeEntry[]> {
 }
 
 async function classifyDir(dir: string): Promise<WorktreeEntry | null> {
+	// A session worktree is also a regular `.git`-file worktree, so the marker
+	// check must run first. Malformed markers fall through (with a logged
+	// warning) and classify as pr-checkout, which default `clear` also keeps
+	// while the parent repo still tracks the worktree.
+	const sessionMarker = await readSessionWorktreeMarker(dir);
+	if (sessionMarker) return classifySession(dir, sessionMarker);
 	const gitEntry = path.join(dir, ".git");
 	const gitStat = await fs.stat(gitEntry).catch(() => null);
 	if (gitStat?.isFile()) {
@@ -237,6 +312,18 @@ async function classifyDir(dir: string): Promise<WorktreeEntry | null> {
 		// Only after confirming no live owner is the "no live task" claim true.
 		// A running subagent's sandbox stays live so `clear` won't delete it.
 		orphanReason: live ? undefined : "task-isolation leftover (no live task owns it)",
+	};
+}
+
+function classifySession(dir: string, marker: SessionWorktreeInfo): WorktreeEntry {
+	// Session worktrees are persistent: never orphaned, never eligible for
+	// default `clear`, even when the parent repo has gone away.
+	return {
+		path: dir,
+		kind: "session",
+		parentRepo: marker.repoRoot,
+		branch: marker.branch,
+		name: marker.name,
 	};
 }
 
@@ -299,6 +386,9 @@ function formatEntryDetail(entry: WorktreeEntry): string {
 		const repo = entry.parentRepo ? path.basename(entry.parentRepo) : "unknown repo";
 		const branch = entry.branch ?? "unknown branch";
 		parts.push(`${repo} · ${branch}`);
+	} else if (entry.kind === "session") {
+		const repo = entry.parentRepo ? path.basename(entry.parentRepo) : "unknown repo";
+		parts.push(`session ${entry.name ?? "?"} · ${repo} · ${entry.branch ?? "unknown branch"}`);
 	} else if (entry.kind === "task-isolation") {
 		parts.push("task-isolation sandbox");
 	} else if (entry.kind === "empty") {
