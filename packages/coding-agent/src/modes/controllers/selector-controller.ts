@@ -90,6 +90,7 @@ import { AssistantMessageComponent } from "../components/assistant-message";
 import { CopySelectorComponent } from "../components/copy-selector";
 import { ExtensionDashboard } from "../components/extensions";
 import { listLiveToolRecords, liveToolRecordFromSession } from "../components/extensions/live-tool-session";
+import { FleetOverlayComponent } from "../components/fleet-overlay";
 import { HistorySearchComponent } from "../components/history-search";
 import { LoginDialogComponent } from "../components/login-dialog";
 import { LogoutAccountSelectorComponent } from "../components/logout-account-selector";
@@ -109,6 +110,7 @@ import { TreeSelectorComponent } from "../components/tree-selector";
 import { UserMessageSelectorComponent } from "../components/user-message-selector";
 import type { SessionObserverRegistry } from "../session-observer-registry";
 import { buildCopyTargets } from "../utils/copy-targets";
+import type { FleetController } from "./fleet-controller";
 
 const MANUAL_LOGIN_PROMPT = "Paste the authorization code (or full redirect URL), then press Enter:";
 
@@ -2218,5 +2220,143 @@ export class SelectorController {
 		} else {
 			showReadyHub();
 		}
+	}
+
+	/**
+	 * Fleet overview: fullscreen dashboard of the process's top-level sessions
+	 * plus resumable archived entries from the durable fleet index.
+	 */
+	showFleetOverlay(fleet: FleetController): void {
+		if (!fleet.available) {
+			this.ctx.showStatus("Fleet is unavailable in this launch mode");
+			return;
+		}
+		fleet
+			.ensureSupervisor()
+			.then(supervisor => {
+				let overlayHandle: OverlayHandle | undefined;
+				let closed = false;
+				const done = () => {
+					if (closed) return;
+					closed = true;
+					overlay.dispose();
+					overlayHandle?.hide();
+					if (overlayHandle) this.focusActiveEditorArea();
+					this.ctx.ui.requestRender();
+				};
+				const overlay = new FleetOverlayComponent({
+					records: () => supervisor.records(),
+					archived: () => supervisor.archivedEntries(),
+					nextModelLabel: () =>
+						fleet.nextTaskModel ? `${fleet.nextTaskModel.provider}/${fleet.nextTaskModel.id}` : "default",
+					onDone: done,
+					onFocus: id => {
+						done();
+						fleet.focusRecord(id).catch((err: unknown) => {
+							this.ctx.showError(err instanceof Error ? err.message : String(err));
+						});
+					},
+					onResume: entry => {
+						done();
+						this.ctx.showStatus(`Resuming ${entry.title ?? entry.id}…`);
+						fleet
+							.resumeArchived(entry)
+							.then(id => fleet.focusRecord(id))
+							.catch((err: unknown) => {
+								this.ctx.showError(err instanceof Error ? err.message : String(err));
+							});
+					},
+					onNewTask: () => {
+						done();
+						void this.#promptFleetTask(fleet);
+					},
+					onPickModel: () => {
+						done();
+						this.#showFleetModelPicker(fleet);
+					},
+					onStop: id => {
+						void fleet.stopRecord(id).catch((err: unknown) => {
+							this.ctx.showError(err instanceof Error ? err.message : String(err));
+						});
+					},
+					onRemoveArchived: id => {
+						void supervisor.removeArchived(id).catch((err: unknown) => {
+							this.ctx.showError(err instanceof Error ? err.message : String(err));
+						});
+					},
+					requestRender: () => this.ctx.ui.requestRender(),
+					subscribe: listener => supervisor.onChange(listener),
+					ui: this.ctx.ui,
+					cwd: this.ctx.sessionManager.getCwd(),
+				});
+				overlayHandle = this.#showFullscreenMenu(overlay);
+			})
+			.catch((err: unknown) => {
+				this.ctx.showError(err instanceof Error ? err.message : String(err));
+			});
+	}
+
+	/** New-task flow: multi-line prompt dialog → launch → back to the overview. */
+	async #promptFleetTask(fleet: FleetController): Promise<void> {
+		const ui = this.ctx.getToolUIContext?.();
+		if (!ui) {
+			this.ctx.showStatus("Interactive UI is not ready yet");
+			return;
+		}
+		const text = (await ui.editor("New fleet task", "", undefined, { promptStyle: true }))?.trim();
+		if (!text) {
+			this.showFleetOverlay(fleet);
+			return;
+		}
+		this.ctx.showStatus("Launching fleet task…");
+		try {
+			await fleet.launchTask(text);
+		} catch (err) {
+			this.ctx.showError(err instanceof Error ? err.message : String(err));
+		}
+		this.showFleetOverlay(fleet);
+	}
+
+	/**
+	 * Overview Ctrl+P: pick the model applied to the NEXT launched fleet task
+	 * only. Stored on the controller — running sessions are never touched.
+	 */
+	#showFleetModelPicker(fleet: FleetController): void {
+		const current = fleet.nextTaskModel;
+		let overlayHandle: OverlayHandle | undefined;
+		let closed = false;
+		const done = () => {
+			if (closed) return;
+			closed = true;
+			overlayHandle?.hide();
+			this.focusActiveEditorArea();
+			this.ctx.ui.requestRender();
+			this.showFleetOverlay(fleet);
+		};
+		const picker = new ModelPickerComponent(
+			this.ctx.ui,
+			this.ctx.settings,
+			this.ctx.session.modelRegistry,
+			this.ctx.session.scopedModels,
+			{
+				onPick: (model, selector) => {
+					fleet.nextTaskModel = model;
+					this.ctx.showStatus(`Next fleet task model: ${selector}`);
+					done();
+				},
+				onCancel: done,
+			},
+			{
+				currentSelector: current ? `${current.provider}/${current.id}` : undefined,
+			},
+		);
+		overlayHandle = this.ctx.ui.showOverlay(picker, {
+			anchor: "bottom-center",
+			width: "100%",
+			maxHeight: "100%",
+			margin: 0,
+		});
+		this.ctx.ui.setFocus(picker);
+		this.ctx.ui.requestRender();
 	}
 }

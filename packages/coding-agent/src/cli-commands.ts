@@ -92,6 +92,12 @@ export const commands: CommandEntry[] = [
 		help: commandHelp.gcHelp,
 	},
 	{
+		name: "fleet",
+		aliases: ["sessions"],
+		load: () => import("./commands/fleet").then(m => m.default),
+		help: commandHelp.fleetHelp,
+	},
+	{
 		name: "grep",
 		load: () => import("./commands/grep").then(m => m.default),
 		help: commandHelp.grepHelp,

@@ -59,6 +59,7 @@ import { loadExtensions } from "./extensibility/extensions/loader";
 import { ExtensionRunner } from "./extensibility/extensions/runner";
 import type { ExtensionUIContext } from "./extensibility/extensions/types";
 import { scheduleMarketplaceAutoUpdate } from "./extensibility/plugins/marketplace-auto-update";
+import type { FleetSessionFactory } from "./fleet/types";
 import { registerDaemonProjectPresence } from "./launch/presence";
 import { discoverStartupLspServers } from "./lsp/servers";
 import type { MCPManager } from "./mcp";
@@ -79,6 +80,7 @@ import { ensureTheme, initTheme, stopThemeWatcher } from "./modes/theme/theme";
 import type { SubmittedUserInput } from "./modes/types";
 import { createWarpEventBridgeExtension } from "./modes/warp-events";
 import { AgentLifecycleManager } from "./registry/agent-lifecycle";
+import { AgentRegistry } from "./registry/agent-registry";
 import {
 	type CreateAgentSessionOptions,
 	type CreateAgentSessionResult,
@@ -478,6 +480,65 @@ export function createAcpSessionFactory(args: AcpSessionFactoryOptions): AcpSess
 	};
 }
 
+export interface FleetSessionFactoryOptions {
+	baseOptions: CreateAgentSessionOptions;
+	settings: Settings;
+	sessionDir?: string;
+	authStorage: AuthStorage;
+	modelRegistry: ModelRegistry;
+	createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
+}
+
+/**
+ * Build the factory the fleet supervisor uses to host additional top-level
+ * sessions in this process (overview `n` / resume). Mirrors
+ * {@link createAcpSessionFactory}: fresh SessionManager + cwd-cloned settings
+ * per session, and a PRIVATE AgentRegistry per `omp://sdk.md` so hub/IRC
+ * routing stays scoped to each session tree (upstream #10229/#10230). Unlike
+ * ACP, MCP stays enabled — a fleet session is a full project session in its
+ * own right (typically rooted in its own worktree).
+ *
+ * Main-session lineage fields from `baseOptions` (session manager, provider
+ * session/cache identity) are stripped: sharing them across resident sessions
+ * would cross-contaminate provider caches.
+ */
+export function createFleetSessionFactory(args: FleetSessionFactoryOptions): FleetSessionFactory {
+	return async ({ cwd, model, resumeSessionFile }) => {
+		const nextSessionManager = resumeSessionFile
+			? await SessionManager.open(resumeSessionFile, args.sessionDir)
+			: SessionManager.create(cwd, args.sessionDir);
+		const effectiveCwd = resumeSessionFile ? nextSessionManager.getCwd() : cwd;
+		const nextSettings = await args.settings.cloneForCwd(effectiveCwd);
+		const titleSystemPromptSource = discoverTitleSystemPromptFile(effectiveCwd);
+		const titleSystemPrompt = await resolvePromptInput(titleSystemPromptSource, "title system prompt");
+		const { session, setToolUIContext, mcpManager } = await args.createSession({
+			...args.baseOptions,
+			cwd: effectiveCwd,
+			model: model ?? args.baseOptions.model,
+			sessionManager: nextSessionManager,
+			settings: nextSettings,
+			authStorage: args.authStorage,
+			modelRegistry: args.modelRegistry,
+			agentRegistry: new AgentRegistry(),
+			hasUI: true,
+			interactivePrompts: true,
+			titleSystemPrompt,
+			eventBus: new EventBus(),
+			subagentEventBus: new EventBus(),
+			providerSessionId: undefined,
+			providerPromptCacheKey: undefined,
+			providerPromptCacheKeySource: undefined,
+		});
+		return {
+			session,
+			setToolUIContext,
+			dispose: async () => {
+				await mcpManager?.disconnectAll();
+			},
+		};
+	};
+}
+
 async function runInteractiveMode(
 	session: AgentSession,
 	version: string,
@@ -498,6 +559,8 @@ async function runInteractiveMode(
 	joinLink?: string,
 	startBackgroundModelDiscovery?: () => Promise<void>,
 	startupLease?: ComposerLease,
+	fleetSessionFactory?: FleetSessionFactory,
+	openFleetOverlay?: boolean,
 ): Promise<void> {
 	let mode: InteractiveMode;
 	try {
@@ -511,6 +574,7 @@ async function runInteractiveMode(
 			eventBus,
 			startupLease?.composer,
 			subagentEventBus,
+			fleetSessionFactory,
 		);
 		startupLease?.adopt();
 	} catch (error) {
@@ -594,6 +658,11 @@ async function runInteractiveMode(
 		} else if (notify.kind === "info") {
 			mode.showStatus(notify.message);
 		}
+	}
+
+	// `omp fleet`: land directly on the overview once the transcript is stable.
+	if (openFleetOverlay) {
+		mode.showFleetOverlay();
 	}
 
 	// `omp join <link>`: dispatch through the same builtin path as a typed
@@ -2056,6 +2125,14 @@ export async function runRootCommand(
 						process.exit(0);
 					}
 				}
+				const fleetSessionFactory = createFleetSessionFactory({
+					baseOptions: sessionOptions,
+					settings: settingsInstance,
+					sessionDir: parsedArgs.sessionDir,
+					authStorage,
+					modelRegistry,
+					createSession,
+				});
 				const startupLease = takeStartupComposerLease();
 				try {
 					stopStartupWatchdog();
@@ -2080,6 +2157,8 @@ export async function runRootCommand(
 						parsedArgs.join,
 						startBackgroundModelDiscovery,
 						startupLease,
+						fleetSessionFactory,
+						parsedArgs.fleet === true,
 					);
 				} finally {
 					startupLease?.dispose();

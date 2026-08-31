@@ -27,6 +27,8 @@ export class SessionFocusController {
 		private registry: AgentRegistry = AgentRegistry.global(),
 		private lifecycle: () => AgentLifecycleManager = () => AgentLifecycleManager.global(),
 	) {}
+	/** Observed by the fleet bridge: fires with the focused id after every successful retarget (undefined = main). */
+	onFocusChanged?: (id: string | undefined) => void;
 
 	get focusedAgentId(): string | undefined {
 		return this.#focusedAgentId;
@@ -42,13 +44,29 @@ export class SessionFocusController {
 		if (this.ctx.collabGuest) throw new Error("Viewing agents is unavailable in a collab session.");
 		if (id === MAIN_AGENT_ID) return this.unfocus();
 		const session = await this.lifecycle().ensureLive(id);
+		await this.#focusResolved(id, session, `Viewing agent ${id} — Esc returns to main, ←← hops to parent`);
+	}
+
+	/**
+	 * Focus a session that is NOT in this registry — a fleet-supervised
+	 * top-level session living in its own private AgentRegistry. Same attach
+	 * path as {@link focusAgent}; registry lifecycle (ensureLive, parked/removed
+	 * auto-unfocus) does not apply — the fleet supervisor guards liveness.
+	 */
+	async focusExternalSession(id: string, session: AgentSession, statusLabel?: string): Promise<void> {
+		if (this.ctx.collabGuest) throw new Error("Viewing sessions is unavailable in a collab session.");
+		await this.#focusResolved(id, session, statusLabel ?? `Viewing session ${id} — Esc returns to the overview`);
+	}
+
+	async #focusResolved(id: string, session: AgentSession, statusLabel: string): Promise<void> {
 		if (id === this.#focusedAgentId && session === this.#attachedSession) return;
 		this.#focusedAgentId = id;
 		this.#attachedSession = session;
 		this.#registryUnsubscribe ??= this.registry.onChange(e => this.#onRegistryEvent(e));
 		const attached = await this.#attach(session);
 		if (attached && this.#focusedAgentId === id && this.#attachedSession === session) {
-			this.ctx.showStatus(`Viewing agent ${id} — Esc returns to main, ←← hops to parent`);
+			this.onFocusChanged?.(id);
+			this.ctx.showStatus(statusLabel);
 		}
 	}
 
@@ -68,7 +86,10 @@ export class SessionFocusController {
 		this.#focusedAgentId = undefined;
 		this.#attachedSession = undefined;
 		const attached = await this.#attach(this.ctx.session);
-		if (attached && this.#focusedAgentId === undefined) this.ctx.showStatus("Returned to main session");
+		if (attached && this.#focusedAgentId === undefined) {
+			this.onFocusChanged?.(undefined);
+			this.ctx.showStatus("Returned to main session");
+		}
 	}
 
 	dispose(): void {

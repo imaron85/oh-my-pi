@@ -82,6 +82,7 @@ import type { CompactOptions } from "../extensibility/extensions/types";
 import type { Skill } from "../extensibility/skills";
 import type { FileSlashCommand } from "../extensibility/slash-commands";
 import { loadSlashCommands } from "../extensibility/slash-commands";
+import type { FleetSessionFactory } from "../fleet/types";
 import type { Goal, GoalModeState } from "../goals/state";
 import { copyLocalArtifacts, resolveLocalUrlToPath } from "../internal-urls";
 import { LSP_STARTUP_EVENT_CHANNEL, type LspStartupEvent } from "../lsp/startup-events";
@@ -188,6 +189,7 @@ import { CleanseCommandController } from "./controllers/cleanse-command-controll
 import { CommandController } from "./controllers/command-controller";
 import { EventController } from "./controllers/event-controller";
 import { ExtensionUiController } from "./controllers/extension-ui-controller";
+import { FleetController } from "./controllers/fleet-controller";
 import { InputController } from "./controllers/input-controller";
 import { LiveCommandController } from "./controllers/live-command-controller";
 import { MCPCommandController } from "./controllers/mcp-command-controller";
@@ -774,6 +776,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	readonly #inputController: InputController;
 	readonly #selectorController: SelectorController;
 	readonly #focusController: SessionFocusController;
+	readonly #fleetController: FleetController;
 	get viewSession(): AgentSession {
 		return this.#focusController.target ?? this.session;
 	}
@@ -791,6 +794,12 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 	unfocusSession(): Promise<void> {
 		return this.#focusController.unfocus();
+	}
+	focusExternalSession(id: string, session: AgentSession): Promise<void> {
+		return this.#focusController.focusExternalSession(id, session);
+	}
+	showFleetOverlay(): void {
+		this.#selectorController.showFleetOverlay(this.#fleetController);
 	}
 	clearTransientSessionUi(): void {
 		this.#hideSessionInfo();
@@ -856,6 +865,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		eventBus?: EventBus,
 		composer?: Composer,
 		subagentEventBus?: EventBus,
+		fleetSessionFactory?: FleetSessionFactory,
 	) {
 		this.session = session;
 		this.sessionManager = session.sessionManager;
@@ -1043,6 +1053,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#liveCommandController = new LiveCommandController(this);
 		this.#selectorController = new SelectorController(this);
 		this.#focusController = new SessionFocusController(this);
+		this.#fleetController = new FleetController(this, fleetSessionFactory);
+		this.#focusController.onFocusChanged = id => this.#fleetController.onViewFocusChanged(id);
 		this.#inputController = new InputController(this);
 		this.session.setTitleGenerationStart?.(() => {
 			this.#inputController.notifyTitleGenerationStart();
@@ -4800,6 +4812,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#omfgController.dispose();
 		this.#cleanseController.dispose();
 		this.#focusController.dispose();
+		await this.#fleetController.dispose();
 
 		// Surface an explicit "Closing session…" line so the user sees a reason
 		// for the pause while `session.dispose()` flushes memory consolidate and

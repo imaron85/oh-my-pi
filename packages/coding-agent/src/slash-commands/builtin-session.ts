@@ -461,6 +461,16 @@ export const BUILTIN_SESSION_SLASH_COMMANDS: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
+		name: "fleet",
+		aliases: ["overview"],
+		icon: "agents",
+		description: "Open the fleet overview (parallel top-level sessions)",
+		handleTui: (_command, runtime) => {
+			runtime.ctx.showFleetOverlay?.();
+			runtime.ctx.editor.setText("");
+		},
+	},
+	{
 		name: "git",
 		icon: "branch",
 		description: "Open the git UI (split diff viewer, staging, commit composer)",

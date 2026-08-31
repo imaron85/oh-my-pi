@@ -4,6 +4,11 @@
 
 ### Added
 
+- Added the fleet overview (`omp fleet` / `omp sessions`, `/fleet`, Alt+S): a Claude-Code-style dashboard hosting parallel top-level sessions in one TUI — launch tasks with `n`, watch running/waiting/done/error status live, press Enter to switch into any session and Esc to return.
+- Fleet tasks automatically run in a persistent per-session git worktree (branch `omp/session/<name>`), listed by `omp worktree`; the default `omp worktree clear` never touches them.
+- Added a durable per-project fleet index so every fleet session (with its worktree path and model) is listed and resumable after a crash or restart — no more hunting worktree locations.
+- Ctrl+P on the fleet overview picks the model for the next launched task only; running sessions keep their models.
+- Tool questions and approvals raised by unfocused fleet sessions queue safely, flip the session's row to `waiting`, and are presented when the session is focused.
 - Added `injectV1: false` option to `openai-models-list` discovery to fetch the model list from `{baseUrl}/models` without injecting `/v1`, for gateways that root their OpenAI-compatible surface at a versioned URL (e.g. `https://api.opper.ai/v3/compat`) where the `/v1`-injected endpoint returns only a small subset.
 - Added provider-reported credits and concrete routed-model counts to `/session` statistics ([#8590](https://github.com/can1357/oh-my-pi/pull/8590) by [@will-bogusz](https://github.com/will-bogusz)).
 - Added `CLINE_API_KEY` to the CLI environment help for native ClinePass subscription inference ([#7863](https://github.com/can1357/oh-my-pi/pull/7863) by [@will-bogusz](https://github.com/will-bogusz)).

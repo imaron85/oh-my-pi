@@ -143,6 +143,10 @@ export interface InteractiveModeContext {
 	focusParentSession(): Promise<void>;
 	/** Return the view to the main session (delegates to SessionFocusController.unfocus). */
 	unfocusSession(): Promise<void>;
+	/** Focus a fleet-supervised top-level session that lives outside the agent registry. Optional: fleet hosting requires a factory. */
+	focusExternalSession?(id: string, session: AgentSession): Promise<void>;
+	/** Open the fleet overview overlay (no-op when fleet hosting is unavailable). Optional for partial test contexts. */
+	showFleetOverlay?(): void;
 	/** Clear loader, transient HUD/pending containers, streaming state, and pending tools. */
 	clearTransientSessionUi(): void;
 	settings: Settings;
