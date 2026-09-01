@@ -100,10 +100,10 @@ describe("sloppy v8", () => {
 
 	test("keeps a mid-line ellipsis in REWRITE literal when the capture is multi-line", () => {
 		const content = "function f() {\n  a();\n  b();\n}\n";
-		// biome-ignore lint/suspicious/noTemplateCurlyInString: test fixture contains template literal
+		// oxlint-disable-next-line no-template-curly-in-string -- test fixture contains template literal
 		const input = operation("function f() {\n…\n}", "function f() {\n  return `${x}[… ]${y}`;\n}");
 
-		// biome-ignore lint/suspicious/noTemplateCurlyInString: test fixture contains template literal
+		// oxlint-disable-next-line no-template-curly-in-string -- test fixture contains template literal
 		expect(variant.apply(content, input, context)).toBe("function f() {\n  return `${x}[… ]${y}`;\n}\n");
 	});
 
@@ -1494,6 +1494,54 @@ describe("sloppy v8", () => {
 		);
 	});
 
+	test("labels a fuzzy no-match anchor as non-copyable instead of guessing a corrected operation", () => {
+		const content = "single: 1;\nreal: 2;\n";
+		const input = `${M.open}\nreal: ⟪2│TWO⟫;\n${M.open}\nnope: ⟪nothing│X⟫;`;
+
+		let message = "";
+		try {
+			variant.apply(content, input, { path: "bt.txt" });
+		} catch (error) {
+			message = (error as Error).message;
+		}
+
+		// The unmatched op is named and grounded in current file content.
+		expect(message).toMatch(/Operation 2 did not match bt\.txt\. Failed fragment: "nope:" has 0 occurrences\./);
+		// No fabricated retry: the guess `ngle:` (a sliver of `single:`) never appears,
+		// and the block is not mislabeled copy-ready when it would drop the sibling op.
+		expect(message).not.toContain(`ngle:${M.selectOpen}`);
+		expect(message).not.toContain("Copy-ready corrected operation:");
+		expect(message).toContain("No copy-ready correction");
+		expect(message).toContain(
+			"No operations were applied — ops apply atomically; re-send the full corrected payload.",
+		);
+	});
+
+	test("does not label a partial retry copy-ready when an atomic payload has sibling operations", () => {
+		const content = [
+			"real: 2;",
+			"function load() {",
+			"  const result = fetchCurrent();",
+			"  return result;",
+			"}",
+			"",
+		].join("\n");
+		const input = `${M.open}\nreal: ⟪2│TWO⟫;\n${M.open}\nfunction load() {…\n⟪const result = fetchLegacy();│const result = fetchCurrent();⟫…\nreturn result;\n}`;
+
+		let message = "";
+		try {
+			variant.apply(content, input, { path: "bt.txt" });
+		} catch (error) {
+			message = (error as Error).message;
+		}
+
+		expect(message).not.toContain("Copy-ready corrected operation:");
+		expect(message).toContain("retrying this operation alone would drop sibling operations");
+		expect(message).toContain(
+			"No operations were applied — ops apply atomically; re-send the full corrected payload.",
+		);
+	});
+
 	test("teaches insert intent when MATCH is text the author meant to add", () => {
 		const content = ["switch (event.type) {", "  case 'message':", "    handleMessage(event);", "}", ""].join("\n");
 		const input = operation("  case 'end_turn':", "  case 'end_turn':\n    finishTurn();");
@@ -1667,7 +1715,7 @@ describe("sloppy v8", () => {
 			"      ui,",
 			"      (spinner) => theme.fg('accent', spinner),",
 			"      (text) => theme.fg('muted', text),",
-			// biome-ignore lint/suspicious/noTemplateCurlyInString: test fixture contains template literal
+			// oxlint-disable-next-line no-template-curly-in-string -- test fixture contains template literal
 			"      `Summarizing branch... (${keyText('app.interrupt')} to cancel)`,",
 			"    );",
 			"",
@@ -1675,7 +1723,7 @@ describe("sloppy v8", () => {
 		const pattern = [
 			"super(\u2026",
 			"⟪'branchSummary'⟫,\u2026",
-			// biome-ignore lint/suspicious/noTemplateCurlyInString: test fixture contains template literal
+			// oxlint-disable-next-line no-template-curly-in-string -- test fixture contains template literal
 			"`Summarizing branch... (${keyText('app.interrupt')} to cancel)`,",
 			");",
 		].join("\n");
