@@ -59,6 +59,7 @@ import { loadExtensions } from "./extensibility/extensions/loader";
 import { ExtensionRunner } from "./extensibility/extensions/runner";
 import type { ExtensionUIContext } from "./extensibility/extensions/types";
 import { scheduleMarketplaceAutoUpdate } from "./extensibility/plugins/marketplace-auto-update";
+import { resumeInterruptedSubagents } from "./fleet/resume-subagents";
 import type { FleetSessionFactory } from "./fleet/types";
 import { registerDaemonProjectPresence } from "./launch/presence";
 import { discoverStartupLspServers } from "./lsp/servers";
@@ -511,6 +512,9 @@ export function createFleetSessionFactory(args: FleetSessionFactoryOptions): Fle
 		const nextSettings = await args.settings.cloneForCwd(effectiveCwd);
 		const titleSystemPromptSource = discoverTitleSystemPromptFile(effectiveCwd);
 		const titleSystemPrompt = await resolvePromptInput(titleSystemPromptSource, "title system prompt");
+		const agentRegistry = new AgentRegistry();
+		const eventBus = new EventBus();
+		const subagentEventBus = new EventBus();
 		const { session, setToolUIContext, mcpManager } = await args.createSession({
 			...args.baseOptions,
 			cwd: effectiveCwd,
@@ -520,22 +524,37 @@ export function createFleetSessionFactory(args: FleetSessionFactoryOptions): Fle
 			settings: nextSettings,
 			authStorage: args.authStorage,
 			modelRegistry: args.modelRegistry,
-			agentRegistry: new AgentRegistry(),
+			agentRegistry,
 			hasUI: true,
 			interactivePrompts: true,
 			titleSystemPrompt,
-			eventBus: new EventBus(),
-			subagentEventBus: new EventBus(),
+			eventBus,
+			subagentEventBus,
 			providerSessionId: undefined,
 			providerPromptCacheKey: undefined,
 			providerPromptCacheKeySource: undefined,
 		});
+		const resumeSubagents =
+			resumeSessionFile && nextSettings.get("task.autoResumeSubagents")
+				? () =>
+						resumeInterruptedSubagents({
+							session,
+							registry: agentRegistry,
+							authStorage: args.authStorage,
+							modelRegistry: args.modelRegistry,
+							settings: nextSettings,
+							enableLsp: args.baseOptions.enableLsp ?? true,
+							eventBus,
+							subagentEventBus,
+						})
+				: undefined;
 		return {
 			session,
 			setToolUIContext,
 			dispose: async () => {
 				await mcpManager?.disconnectAll();
 			},
+			resumeSubagents,
 		};
 	};
 }
@@ -2059,6 +2078,27 @@ export async function runRootCommand(
 				}),
 				Math.trunc(Number(settingsInstance.get("task.agentIdleTtlMs") ?? 420_000) || 0),
 			);
+
+			// Auto-resume: a resumed interrupted session restores its persisted
+			// subagent tree and re-kicks every child cut off mid-run (the reviver
+			// factory above makes the cold revives possible). Fire-and-forget —
+			// startup must not block on child roster scans or LLM turns.
+			const resumedFromDisk = Boolean(parsedArgs.continue || parsedArgs.resume || parsedArgs.fork);
+			if (isInteractive && resumedFromDisk && settingsInstance.get("task.autoResumeSubagents")) {
+				void resumeInterruptedSubagents({
+					session,
+					registry: AgentRegistry.global(),
+					authStorage,
+					modelRegistry,
+					settings: settingsInstance,
+					enableLsp: sessionOptions.enableLsp ?? true,
+					eventBus,
+					subagentEventBus,
+					installReviver: false,
+				}).catch(error => {
+					logger.warn("Subagent auto-resume failed", { error: String(error) });
+				});
+			}
 			if (parsedArgs.apiKey && !sessionOptions.model && session.model) {
 				authStorage.setRuntimeApiKey(session.model.provider, parsedArgs.apiKey);
 			}

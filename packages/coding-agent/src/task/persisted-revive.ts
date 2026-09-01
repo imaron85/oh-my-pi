@@ -36,6 +36,13 @@ export interface PersistedSubagentReviveContext {
 	eventBus?: EventBus;
 	/** Root-scoped observability bus the revived run's frames also publish to. */
 	subagentEventBus?: EventBus;
+	/**
+	 * Registry owning the parked refs this factory revives. Defaults to the
+	 * process-global registry; multi-session hosts (fleet, SDK embedders) pass
+	 * their session's private registry so the revived child registers — and
+	 * CAS-validates its expected ref — in the registry that actually holds it.
+	 */
+	registry?: AgentRegistry;
 }
 
 /**
@@ -57,7 +64,7 @@ export interface PersistedSubagentReviveContext {
 export function createPersistedSubagentReviverFactory(
 	ctx: PersistedSubagentReviveContext,
 ): PersistedSubagentReviverFactory {
-	const registry = AgentRegistry.global();
+	const registry = ctx.registry ?? AgentRegistry.global();
 	return async ref => {
 		const sessionFile = ref.sessionFile;
 		if (!sessionFile) return undefined;
@@ -129,6 +136,7 @@ export function createPersistedSubagentReviverFactory(
 				// frames ride the same bus the RPC/collab surfaces subscribed to.
 				subagentEventBus: ctx.subagentEventBus,
 				modelRegistry: ctx.modelRegistry,
+				agentRegistry: registry,
 				...(persistedModelPattern ? { modelPattern: persistedModelPattern } : {}),
 				modelPatternAuthFallback: init.resolvedModel,
 				settings: subagentSettings,

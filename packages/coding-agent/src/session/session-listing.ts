@@ -156,6 +156,23 @@ function extractTextFromContent(content: Message["content"]): string {
 }
 
 /**
+ * Derive the lifecycle {@link SessionStatus} of one session file from its tail
+ * window. Used by subagent auto-resume to find transcripts cut off mid-run
+ * without paying a full listing scan.
+ */
+export async function readSessionFileStatus(
+	file: string,
+	storage: SessionStorage = new FileSessionStorage(),
+): Promise<SessionStatus> {
+	try {
+		const [, suffix] = await storage.readTextSlices(file, 0, SESSION_LIST_SUFFIX_BYTES);
+		return deriveSessionStatus(suffix);
+	} catch {
+		return "unknown";
+	}
+}
+
+/**
  * Derive a {@link SessionStatus} from a tail window of a session file. Entries are
  * newline-terminated on write, so within the window only the first line can be a
  * partial fragment — it simply fails to parse and is skipped. We walk backwards to
@@ -186,6 +203,7 @@ function deriveSessionStatus(suffix: string): SessionStatus {
 interface TailMessage {
 	role?: string;
 	stopReason?: string;
+	toolName?: string;
 	content?: unknown;
 }
 
@@ -212,6 +230,11 @@ function statusFromTailMessage(message: TailMessage): SessionStatus {
 			return "complete";
 		}
 		case "toolResult":
+			// A settled `yield` is a subagent's terminal handoff — the task ran to
+			// completion even though no assistant turn follows the result. Any
+			// other trailing toolResult means the loop was cut off before the
+			// next assistant turn.
+			if (message.toolName === "yield") return "complete";
 			// Tools ran but the agent never produced the following assistant turn.
 			return "interrupted";
 		case "user":

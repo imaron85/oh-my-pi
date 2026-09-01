@@ -5059,6 +5059,18 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"task.autoResumeSubagents": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "tasks",
+			group: "Subagents",
+			label: "Auto-Resume Subagents",
+			description:
+				"When resuming an interrupted session, automatically revive its persisted subagent tree and re-kick every subagent that was cut off mid-run so it finishes and yields.",
+		},
+	},
+
 	"task.softRequestBudget": {
 		type: "number",
 		default: 200,

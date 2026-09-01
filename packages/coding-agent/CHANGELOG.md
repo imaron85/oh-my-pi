@@ -9,6 +9,8 @@
 - Added a durable per-project fleet index so every fleet session (with its worktree path and model) is listed and resumable after a crash or restart — no more hunting worktree locations.
 - The fleet overview mirrors the in-session model keys, scoped to the next launched task only: Ctrl+P / Shift+Ctrl+P cycle the configured role ladder (smol/default/slow) and Alt+P opens the model picker; running sessions keep their models.
 - Tool questions and approvals raised by unfocused fleet sessions queue safely, flip the session's row to `waiting`, and are presented when the session is focused.
+- Resuming an interrupted session now restores its whole persisted subagent tree (children, grandchildren, …) and automatically re-kicks every subagent that was cut off mid-run so it continues from where it left off and yields (`task.autoResumeSubagents`, default on; works for fleet resume and `--resume`/`--continue`).
+- Session status listings now classify a transcript ending in a settled `yield` as complete instead of interrupted.
 - Added `injectV1: false` option to `openai-models-list` discovery to fetch the model list from `{baseUrl}/models` without injecting `/v1`, for gateways that root their OpenAI-compatible surface at a versioned URL (e.g. `https://api.opper.ai/v3/compat`) where the `/v1`-injected endpoint returns only a small subset.
 - Added provider-reported credits and concrete routed-model counts to `/session` statistics ([#8590](https://github.com/can1357/oh-my-pi/pull/8590) by [@will-bogusz](https://github.com/will-bogusz)).
 - Added `CLINE_API_KEY` to the CLI environment help for native ClinePass subscription inference ([#7863](https://github.com/can1357/oh-my-pi/pull/7863) by [@will-bogusz](https://github.com/will-bogusz)).

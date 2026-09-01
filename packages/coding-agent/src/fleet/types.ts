@@ -10,6 +10,7 @@ import type { Model } from "@oh-my-pi/pi-ai";
 import type { ExtensionUIContext } from "../extensibility/extensions/types";
 import type { AgentSession } from "../session/agent-session";
 import type { ConfiguredThinkingLevel } from "../thinking";
+import type { ResumeInterruptedSubagentsResult } from "./resume-subagents";
 
 /**
  * - `running`: a turn is in flight.
@@ -37,6 +38,12 @@ export interface FleetSessionHandle {
 	setToolUIContext: (uiContext: ExtensionUIContext, hasUI: boolean) => void;
 	/** Release factory-owned resources beyond `session.dispose()` (e.g. MCP manager). */
 	dispose?: () => Promise<void>;
+	/**
+	 * Bound by the factory on resumed sessions when `task.autoResumeSubagents`
+	 * is on: restores the persisted subagent tree and re-kicks every subagent
+	 * cut off mid-run (see fleet/resume-subagents.ts).
+	 */
+	resumeSubagents?: () => Promise<ResumeInterruptedSubagentsResult>;
 }
 
 /**

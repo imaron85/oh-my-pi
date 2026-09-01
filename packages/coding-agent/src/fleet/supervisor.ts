@@ -144,6 +144,18 @@ export class FleetSupervisor {
 		// Resumed sessions have no supervisor-launched prompt: idle until used.
 		await this.#upsertIndex(record);
 		this.#refresh(entry.id);
+		// Restore + re-kick the persisted subagent tree in the background; the
+		// factory bound this only for resumed sessions with auto-resume enabled.
+		if (handle.resumeSubagents) {
+			handle
+				.resumeSubagents()
+				.then(result => {
+					if (result.continued.length > 0) this.#refresh(entry.id);
+				})
+				.catch((err: unknown) => {
+					logger.warn("Fleet subagent auto-resume failed", { id: entry.id, err: String(err) });
+				});
+		}
 		return record;
 	}
 
