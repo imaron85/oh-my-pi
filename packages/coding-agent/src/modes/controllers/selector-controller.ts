@@ -2247,8 +2247,7 @@ export class SelectorController {
 				const overlay = new FleetOverlayComponent({
 					records: () => supervisor.records(),
 					archived: () => supervisor.archivedEntries(),
-					nextModelLabel: () =>
-						fleet.nextTaskModel ? `${fleet.nextTaskModel.provider}/${fleet.nextTaskModel.id}` : "default",
+					nextModelLabel: () => fleet.nextTaskLabel(),
 					onDone: done,
 					onFocus: id => {
 						done();
@@ -2274,6 +2273,16 @@ export class SelectorController {
 						done();
 						this.#showFleetModelPicker(fleet);
 					},
+					onCycleModel: direction => {
+						const label = fleet.cycleNextTaskModel(direction);
+						if (!label) this.ctx.showStatus("No role models configured for cycling");
+						this.ctx.ui.requestRender();
+					},
+					cycleForwardKeys: this.ctx.keybindings.getKeys("app.model.cycleForward"),
+					cycleBackwardKeys: this.ctx.keybindings.getKeys("app.model.cycleBackward"),
+					pickerKeys: this.ctx.keybindings.getKeys("app.model.selectTemporary"),
+					cycleKeyLabel: this.ctx.keybindings.getDisplayString("app.model.cycleForward") || "ctrl+p",
+					pickerKeyLabel: this.ctx.keybindings.getDisplayString("app.model.selectTemporary") || "alt+p",
 					onStop: id => {
 						void fleet.stopRecord(id).catch((err: unknown) => {
 							this.ctx.showError(err instanceof Error ? err.message : String(err));
@@ -2340,7 +2349,7 @@ export class SelectorController {
 			this.ctx.session.scopedModels,
 			{
 				onPick: (model, selector) => {
-					fleet.nextTaskModel = model;
+					fleet.setNextTaskModel(model);
 					this.ctx.showStatus(`Next fleet task model: ${selector}`);
 					done();
 				},

@@ -15,6 +15,7 @@ import { FleetIndex } from "../../fleet/fleet-index";
 import { FleetSupervisor } from "../../fleet/supervisor";
 import type { FleetSessionFactory } from "../../fleet/types";
 import { getRepoRoot } from "../../task/worktree";
+import type { ConfiguredThinkingLevel } from "../../thinking";
 import type { InteractiveModeContext } from "../types";
 
 export class FleetController {
@@ -24,6 +25,12 @@ export class FleetController {
 	#supervisorPromise: Promise<FleetSupervisor> | undefined;
 	/** Model applied to the NEXT launched task only; never touches running sessions. */
 	nextTaskModel: Model | undefined;
+	/** Thinking level of the picked role, forwarded to the next launch. */
+	nextTaskThinking: ConfiguredThinkingLevel | undefined;
+	/** Role name when {@link nextTaskModel} came from the Ctrl+P role cycle. */
+	#nextTaskRole: string | undefined;
+	/** Position in the role cycle; kept so repeated Ctrl+P walks the ladder like in-session. */
+	#cycleIndex: number | undefined;
 	#focusedFleetId: string | undefined;
 	#supervisorUnsubscribe: (() => void) | undefined;
 	/** Re-open the overview after unfocusing a fleet session (Claude-Code back gesture). */
@@ -36,6 +43,42 @@ export class FleetController {
 
 	get available(): boolean {
 		return this.#factory !== undefined && !this.#ctx.collabGuest;
+	}
+
+	/**
+	 * Overview Ctrl+P / Shift+Ctrl+P: walk the configured role ladder
+	 * (`cycleOrder`, e.g. smol → default → slow) exactly like the in-session
+	 * binding, but apply the pick to the NEXT launched task only. Returns a
+	 * status label, or undefined when no role models resolve.
+	 */
+	cycleNextTaskModel(direction: 1 | -1): string | undefined {
+		const roleOrder = this.#ctx.settings.get("cycleOrder");
+		const cycle = this.#ctx.session.getRoleModelCycle(roleOrder);
+		if (!cycle || cycle.models.length === 0) return undefined;
+		const start = this.#cycleIndex ?? cycle.currentIndex;
+		const next = (start + direction + cycle.models.length) % cycle.models.length;
+		const entry = cycle.models[next];
+		if (!entry) return undefined;
+		this.#cycleIndex = next;
+		this.#nextTaskRole = entry.role;
+		this.nextTaskModel = entry.model;
+		this.nextTaskThinking = entry.thinkingLevel;
+		return this.nextTaskLabel();
+	}
+
+	/** Alt+P pick: explicit model, no role/thinking attached. */
+	setNextTaskModel(model: Model): void {
+		this.nextTaskModel = model;
+		this.nextTaskThinking = undefined;
+		this.#nextTaskRole = undefined;
+		this.#cycleIndex = undefined;
+	}
+
+	/** Display label for the pending next-task model ("default" when unset). */
+	nextTaskLabel(): string {
+		if (!this.nextTaskModel) return "default";
+		const selector = `${this.nextTaskModel.provider}/${this.nextTaskModel.id}`;
+		return this.#nextTaskRole ? `@${this.#nextTaskRole} ${selector}` : selector;
 	}
 
 	get supervisor(): FleetSupervisor | undefined {
@@ -90,7 +133,11 @@ export class FleetController {
 	/** Launch a new task (worktree + session + prompt); returns its record id. */
 	async launchTask(prompt: string): Promise<string> {
 		const supervisor = await this.ensureSupervisor();
-		const record = await supervisor.launch({ prompt, model: this.nextTaskModel });
+		const record = await supervisor.launch({
+			prompt,
+			model: this.nextTaskModel,
+			thinkingLevel: this.nextTaskThinking,
+		});
 		return record.id;
 	}
 

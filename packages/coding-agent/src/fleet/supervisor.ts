@@ -95,7 +95,7 @@ export class FleetSupervisor {
 			cwd = info.path;
 		}
 
-		const handle = await this.#deps.factory({ cwd, model: request.model });
+		const handle = await this.#deps.factory({ cwd, model: request.model, thinkingLevel: request.thinkingLevel });
 		const record = this.#adopt({ id, title, handle, cwd, worktree });
 
 		const sessionFile = handle.session.sessionManager.getSessionFile();

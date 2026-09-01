@@ -1,14 +1,15 @@
 /**
  * Fleet overview overlay - the Claude-Code-style top-level session dashboard.
- *
  * Fullscreen table of every fleet session for this project: live supervised
  * sessions (running / waiting / idle / done / error) plus durable archived
  * entries from the fleet index that can be resumed. Enter focuses a session,
- * `n` fires a new task, Ctrl+P picks the model applied to the NEXT task only,
- * `x` stops a live session (or drops an archived entry from the index).
+ * `n` fires a new task, the in-session model keys carry over — Ctrl+P cycles
+ * the configured role ladder and Alt+P opens the picker, both scoped to the
+ * NEXT task only — and `x` stops a live session (or drops an archived entry).
  */
 import { type Component, matchesKey, type TUI, truncateToWidth } from "@oh-my-pi/pi-tui";
 import { formatAge } from "@oh-my-pi/pi-utils";
+import type { KeyId } from "../../config/keybindings";
 import type { FleetIndexEntry } from "../../fleet/fleet-index";
 import type { FleetRecord, FleetSessionStatus } from "../../fleet/types";
 import { shortenPath } from "../../tools/render-utils";
@@ -45,7 +46,17 @@ export interface FleetOverlayDeps {
 	onFocus: (id: string) => void;
 	onResume: (entry: FleetIndexEntry) => void;
 	onNewTask: () => void;
+	/** Full model picker for the next task (the in-session Alt+P idiom). */
 	onPickModel: () => void;
+	/** Role-ladder cycle for the next task (the in-session Ctrl+P idiom). */
+	onCycleModel: (direction: 1 | -1) => void;
+	/** Keys mirroring `app.model.cycleForward` / `cycleBackward` / `selectTemporary`. */
+	cycleForwardKeys: readonly KeyId[];
+	cycleBackwardKeys: readonly KeyId[];
+	pickerKeys: readonly KeyId[];
+	/** Human-readable labels for the footer hint (e.g. "ctrl+p", "alt+p"). */
+	cycleKeyLabel: string;
+	pickerKeyLabel: string;
 	onStop: (id: string) => void;
 	onRemoveArchived: (id: string) => void;
 	requestRender: () => void;
@@ -106,9 +117,23 @@ export class FleetOverlayComponent implements Component {
 			this.#deps.onNewTask();
 			return;
 		}
-		if (matchesKey(data, "ctrl+p") || matchesKey(data, "p")) {
-			this.#deps.onPickModel();
-			return;
+		for (const key of this.#deps.cycleBackwardKeys) {
+			if (matchesKey(data, key)) {
+				this.#deps.onCycleModel(-1);
+				return;
+			}
+		}
+		for (const key of this.#deps.cycleForwardKeys) {
+			if (matchesKey(data, key)) {
+				this.#deps.onCycleModel(1);
+				return;
+			}
+		}
+		for (const key of this.#deps.pickerKeys) {
+			if (matchesKey(data, key)) {
+				this.#deps.onPickModel();
+				return;
+			}
 		}
 		if (matchesKey(data, "x")) {
 			const target = rows[this.#selected];
@@ -153,7 +178,10 @@ export class FleetOverlayComponent implements Component {
 		lines.push(row(theme.fg("dim", "next task model: ") + theme.fg("accent", this.#deps.nextModelLabel()), width));
 		lines.push(
 			row(
-				theme.fg("dim", "↑/↓ select · Enter open · n new task · ^P next-task model · x stop/remove · Esc close"),
+				theme.fg(
+					"dim",
+					`↑/↓ select · Enter open · n new task · ${this.#deps.cycleKeyLabel} cycle model · ${this.#deps.pickerKeyLabel} pick model · x stop/remove · Esc close`,
+				),
 				width,
 			),
 		);

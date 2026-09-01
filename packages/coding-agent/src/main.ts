@@ -503,7 +503,7 @@ export interface FleetSessionFactoryOptions {
  * would cross-contaminate provider caches.
  */
 export function createFleetSessionFactory(args: FleetSessionFactoryOptions): FleetSessionFactory {
-	return async ({ cwd, model, resumeSessionFile }) => {
+	return async ({ cwd, model, thinkingLevel, resumeSessionFile }) => {
 		const nextSessionManager = resumeSessionFile
 			? await SessionManager.open(resumeSessionFile, args.sessionDir)
 			: SessionManager.create(cwd, args.sessionDir);
@@ -515,6 +515,7 @@ export function createFleetSessionFactory(args: FleetSessionFactoryOptions): Fle
 			...args.baseOptions,
 			cwd: effectiveCwd,
 			model: model ?? args.baseOptions.model,
+			thinkingLevel: thinkingLevel ?? args.baseOptions.thinkingLevel,
 			sessionManager: nextSessionManager,
 			settings: nextSettings,
 			authStorage: args.authStorage,

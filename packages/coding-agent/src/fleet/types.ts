@@ -9,6 +9,7 @@
 import type { Model } from "@oh-my-pi/pi-ai";
 import type { ExtensionUIContext } from "../extensibility/extensions/types";
 import type { AgentSession } from "../session/agent-session";
+import type { ConfiguredThinkingLevel } from "../thinking";
 
 /**
  * - `running`: a turn is in flight.
@@ -23,8 +24,10 @@ export interface FleetLaunchRequest {
 	prompt: string;
 	/** Display title; defaults to a prompt-derived stub until session titling lands. */
 	title?: string;
-	/** Model for THIS session only (the overview's Ctrl+P "next task" pick). */
+	/** Model for THIS session only (the overview's Ctrl+P role cycle / Alt+P pick). */
 	model?: Model;
+	/** Thinking level carried by the picked role, when the model came from the role cycle. */
+	thinkingLevel?: ConfiguredThinkingLevel;
 	/** Create a dedicated git worktree (default: true inside a git repo). */
 	worktree?: boolean;
 }
@@ -44,6 +47,7 @@ export interface FleetSessionHandle {
 export type FleetSessionFactory = (args: {
 	cwd: string;
 	model?: Model;
+	thinkingLevel?: ConfiguredThinkingLevel;
 	/** Resume this session JSONL instead of creating a fresh session. */
 	resumeSessionFile?: string;
 }) => Promise<FleetSessionHandle>;
