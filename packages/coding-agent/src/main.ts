@@ -555,6 +555,7 @@ export function createFleetSessionFactory(args: FleetSessionFactoryOptions): Fle
 				await mcpManager?.disconnectAll();
 			},
 			resumeSubagents,
+			agentRegistry,
 		};
 	};
 }

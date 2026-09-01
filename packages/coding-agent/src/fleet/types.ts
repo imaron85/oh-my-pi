@@ -8,6 +8,7 @@
  */
 import type { Model } from "@oh-my-pi/pi-ai";
 import type { ExtensionUIContext } from "../extensibility/extensions/types";
+import type { AgentRegistry } from "../registry/agent-registry";
 import type { AgentSession } from "../session/agent-session";
 import type { ConfiguredThinkingLevel } from "../thinking";
 import type { ResumeInterruptedSubagentsResult } from "./resume-subagents";
@@ -44,6 +45,8 @@ export interface FleetSessionHandle {
 	 * cut off mid-run (see fleet/resume-subagents.ts).
 	 */
 	resumeSubagents?: () => Promise<ResumeInterruptedSubagentsResult>;
+	/** The session's private AgentRegistry (its own agent tree; peer mirrors land here). */
+	agentRegistry?: AgentRegistry;
 }
 
 /**

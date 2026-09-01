@@ -14,6 +14,7 @@ import type { FleetIndexEntry } from "../../fleet/fleet-index";
 import { FleetIndex } from "../../fleet/fleet-index";
 import { FleetSupervisor } from "../../fleet/supervisor";
 import type { FleetSessionFactory } from "../../fleet/types";
+import { AgentRegistry } from "../../registry/agent-registry";
 import { getRepoRoot } from "../../task/worktree";
 import type { ConfiguredThinkingLevel } from "../../thinking";
 import type { InteractiveModeContext } from "../types";
@@ -33,6 +34,7 @@ export class FleetController {
 	#cycleIndex: number | undefined;
 	#focusedFleetId: string | undefined;
 	#supervisorUnsubscribe: (() => void) | undefined;
+	#mainRunStateUnsubscribe: (() => void) | undefined;
 	/** Re-open the overview after unfocusing a fleet session (Claude-Code back gesture). */
 	#reopenOverlayOnUnfocus = false;
 
@@ -119,6 +121,14 @@ export class FleetController {
 			gitAvailable,
 			index,
 			getUi: () => this.#ctx.getToolUIContext?.(),
+			mainPeer: {
+				registry: AgentRegistry.global(),
+				sessionFile: this.#ctx.sessionManager.getSessionFile(),
+				displayName: this.#ctx.sessionName ?? "main session",
+			},
+		});
+		this.#mainRunStateUnsubscribe = this.#ctx.session.subscribeRunState(state => {
+			supervisor.syncMainPeerStatus(state);
 		});
 		this.#supervisorUnsubscribe = supervisor.onChange(() => {
 			// Focused fleet session died/was stopped: fall back to the overview.
@@ -163,6 +173,8 @@ export class FleetController {
 	async dispose(): Promise<void> {
 		this.#supervisorUnsubscribe?.();
 		this.#supervisorUnsubscribe = undefined;
+		this.#mainRunStateUnsubscribe?.();
+		this.#mainRunStateUnsubscribe = undefined;
 		const supervisor = this.#supervisor;
 		this.#supervisor = undefined;
 		this.#supervisorPromise = undefined;

@@ -14,8 +14,10 @@
  */
 import { logger } from "@oh-my-pi/pi-utils";
 import type { ExtensionUIContext } from "../extensibility/extensions/types";
+import type { AgentRegistry } from "../registry/agent-registry";
 import { oneLineLabel } from "../task/types";
 import type { FleetIndex, FleetIndexEntry } from "./fleet-index";
+import { FleetPeerBridge } from "./peer-bridge";
 import type { FleetLaunchRequest, FleetRecord, FleetSessionFactory, FleetSessionHandle } from "./types";
 import { FleetUiGate } from "./ui-mux";
 import { bindSessionWorktree, createSessionWorktree } from "./worktree";
@@ -29,6 +31,12 @@ export interface FleetSupervisorDeps {
 	index: FleetIndex;
 	/** The real interactive UI context, once available (InteractiveMode.getToolUIContext). */
 	getUi: () => ExtensionUIContext | undefined;
+	/**
+	 * The host TUI's main session as a peer participant (global registry).
+	 * When provided, every fleet session and the main session mirror each
+	 * other as `peer/<id>` refs for cross-session hub awareness/messaging.
+	 */
+	mainPeer?: { registry: AgentRegistry; sessionFile?: string; displayName?: string };
 }
 
 interface FleetRuntime {
@@ -48,6 +56,7 @@ export class FleetSupervisor {
 	#runtimes = new Map<string, FleetRuntime>();
 	#listeners = new Set<() => void>();
 	#disposed = false;
+	#bridge = new FleetPeerBridge();
 
 	constructor(deps: FleetSupervisorDeps) {
 		this.#deps = deps;
@@ -55,6 +64,19 @@ export class FleetSupervisor {
 			getUi: deps.getUi,
 			onPendingChange: (id, pending) => this.#onDialogPending(id, pending),
 		});
+		if (deps.mainPeer) {
+			this.#bridge.join({
+				peerId: "peer/main",
+				displayName: deps.mainPeer.displayName ?? "main session",
+				registry: deps.mainPeer.registry,
+				sessionFile: deps.mainPeer.sessionFile,
+			});
+		}
+	}
+
+	/** Push the host main session's run state onto its peer mirrors. */
+	syncMainPeerStatus(status: "running" | "idle"): void {
+		this.#bridge.syncStatus("peer/main", status);
 	}
 
 	/** Live records, newest first. */
@@ -164,6 +186,7 @@ export class FleetSupervisor {
 		const runtime = this.#runtimes.get(id);
 		if (!runtime) return;
 		this.#runtimes.delete(id);
+		this.#bridge.leave(`peer/${id}`);
 		this.#gate.release(id);
 		runtime.unsubscribeRunState();
 		try {
@@ -192,6 +215,7 @@ export class FleetSupervisor {
 		for (const id of ids) {
 			await this.stop(id);
 		}
+		this.#bridge.dispose();
 	}
 
 	#adopt(args: {
@@ -226,6 +250,14 @@ export class FleetSupervisor {
 		};
 		this.#runtimes.set(id, runtime);
 		handle.setToolUIContext(this.#gate.createUiContext(id), true);
+		if (handle.agentRegistry) {
+			this.#bridge.join({
+				peerId: `peer/${id}`,
+				displayName: record.title,
+				registry: handle.agentRegistry,
+				sessionFile: handle.session.sessionManager.getSessionFile(),
+			});
+		}
 		this.#refresh(id);
 		return record;
 	}
@@ -257,6 +289,8 @@ export class FleetSupervisor {
 			record.error = undefined;
 		} else if (record.error) record.status = "error";
 		else record.status = runtime.launched && runtime.promptSettled ? "done" : "idle";
+		this.#bridge.syncStatus(`peer/${id}`, handle.session.isStreaming ? "running" : "idle");
+		this.#bridge.syncDisplayName(`peer/${id}`, record.title);
 		this.#emit();
 	}
 
