@@ -2344,14 +2344,13 @@ export class SelectorController {
 		fleet
 			.ensureSupervisor()
 			.then(supervisor => {
-				let overlayHandle: OverlayHandle | undefined;
 				let closed = false;
 				const done = () => {
 					if (closed) return;
 					closed = true;
 					overlay.dispose();
-					overlayHandle?.hide();
-					if (overlayHandle) this.focusActiveEditorArea();
+					overlayHandle.hide();
+					this.focusActiveEditorArea();
 					this.ctx.ui.requestRender();
 				};
 				const overlay = new FleetOverlayComponent({
@@ -2408,7 +2407,7 @@ export class SelectorController {
 					ui: this.ctx.ui,
 					cwd: this.ctx.sessionManager.getCwd(),
 				});
-				overlayHandle = this.#showFullscreenMenu(overlay);
+				const overlayHandle = this.#showFullscreenMenu(overlay);
 			})
 			.catch((err: unknown) => {
 				this.ctx.showError(err instanceof Error ? err.message : String(err));
@@ -2442,12 +2441,11 @@ export class SelectorController {
 	 */
 	#showFleetModelPicker(fleet: FleetController): void {
 		const current = fleet.nextTaskModel;
-		let overlayHandle: OverlayHandle | undefined;
 		let closed = false;
 		const done = () => {
 			if (closed) return;
 			closed = true;
-			overlayHandle?.hide();
+			overlayHandle.hide();
 			this.focusActiveEditorArea();
 			this.ctx.ui.requestRender();
 			this.showFleetOverlay(fleet);
@@ -2469,7 +2467,7 @@ export class SelectorController {
 				currentSelector: current ? `${current.provider}/${current.id}` : undefined,
 			},
 		);
-		overlayHandle = this.ctx.ui.showOverlay(picker, {
+		const overlayHandle = this.ctx.ui.showOverlay(picker, {
 			anchor: "bottom-center",
 			width: "100%",
 			maxHeight: "100%",

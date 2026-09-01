@@ -96,8 +96,9 @@ export class FleetPeerBridge {
 
 	dispose(): void {
 		this.#disposed = true;
-		for (const participant of [...this.#participants.values()]) {
-			this.leave(participant.peerId);
+		// Snapshot: leave() mutates the participant map.
+		for (const peerId of Array.from(this.#participants.keys())) {
+			this.leave(peerId);
 		}
 	}
 

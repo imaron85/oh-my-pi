@@ -62,7 +62,8 @@ export class FleetUiGate {
 		if (!waiters || waiters.size === 0) return;
 		const ui = this.#getUi();
 		if (!ui) return;
-		for (const waiter of [...waiters]) {
+		// Snapshot: waiter resolution mutates the live set.
+		for (const waiter of Array.from(waiters)) {
 			waiters.delete(waiter);
 			waiter.cleanup();
 			waiter.resolve(ui);
@@ -73,7 +74,8 @@ export class FleetUiGate {
 	release(id: string, reason = "session closed"): void {
 		const waiters = this.#waiters.get(id);
 		if (waiters) {
-			for (const waiter of [...waiters]) {
+			// Snapshot: waiter rejection mutates the live set.
+			for (const waiter of Array.from(waiters)) {
 				waiters.delete(waiter);
 				waiter.cleanup();
 				waiter.reject(new FleetUiGateAbort(reason));
